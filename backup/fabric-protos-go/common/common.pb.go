@@ -659,7 +659,6 @@ type BlockHeader struct {
 	Number               uint64   `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
 	PreviousHash         []byte   `protobuf:"bytes,2,opt,name=previous_hash,json=previousHash,proto3" json:"previous_hash,omitempty"`
 	DataHash             []byte   `protobuf:"bytes,3,opt,name=data_hash,json=dataHash,proto3" json:"data_hash,omitempty"`
-	InterFilter          []byte   `protobuf:"bytes,4,opt,name=inter_filter,json=interFilter,proto3" json:"inter_filter,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -707,13 +706,6 @@ func (m *BlockHeader) GetPreviousHash() []byte {
 func (m *BlockHeader) GetDataHash() []byte {
 	if m != nil {
 		return m.DataHash
-	}
-	return nil
-}
-
-func (m *BlockHeader) GetInterFilter() []byte {
-	if m != nil {
-		return m.InterFilter
 	}
 	return nil
 }
