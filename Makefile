@@ -227,10 +227,10 @@ $(BUILD_DIR)/images/%/$(DUMMY):
 		--build-arg GO_VER=$(GO_VER) \
 		--build-arg ALPINE_VER=$(ALPINE_VER) \
 		$(BUILD_ARGS) \
-		-t $(DOCKER_NS)/fabric-$* ./$(BUILD_CONTEXT)
+		-t $(DOCKER_NS)/fabric-rvp-$* ./$(BUILD_CONTEXT)
 	docker tag $(DOCKER_NS)/fabric-rvp-$* $(DOCKER_NS)/fabric-rvp-$*:$(BASE_VERSION)
-	# docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(TWO_DIGIT_VERSION)
-	# docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(DOCKER_TAG)
+	# docker tag $(DOCKER_NS)/fabric-rvp-$* $(DOCKER_NS)/fabric-rvp-$*:$(TWO_DIGIT_VERSION)
+	# docker tag $(DOCKER_NS)/fabric-rvp-$* $(DOCKER_NS)/fabric-rvp-$*:$(DOCKER_TAG)
 	@touch $@
 
 # builds release packages for the host platform
