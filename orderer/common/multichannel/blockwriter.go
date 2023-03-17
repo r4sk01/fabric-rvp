@@ -7,6 +7,10 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"fmt"
+	"hash/fnv"
 	"sync"
 
 	"github.com/golang/protobuf/proto"
@@ -15,6 +19,7 @@ import (
 	"github.com/hyperledger/fabric/common/configtx"
 	"github.com/hyperledger/fabric/common/ledger/blockledger"
 	"github.com/hyperledger/fabric/common/util"
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
 	"github.com/hyperledger/fabric/protoutil"
 )
@@ -83,10 +88,130 @@ func (bw *BlockWriter) CreateNextBlock(messages []*cb.Envelope) *cb.Block {
 	block.Header.DataHash = protoutil.BlockDataHash(data)
 	block.Data = data
 
-	additionalData := make([]byte, 16*1024) // 16Kb of zeros
-	block.Metadata.Metadata = append(block.Metadata.Metadata, additionalData)
+	// ==================================================
+	// New Part Starts Here
+	// ==================================================
+
+	bloomFilter := make([]byte, 16*1024) // 16Kb of zeros
+
+	// Iterate through the messages in the block
+	for _, msg := range messages {
+		payload, err := protoutil.UnmarshalPayload(msg.Payload)
+		if err != nil {
+			logger.Panicf("Could not unmarshal payload: %s", err)
+		}
+
+		// Extract the keys from the transaction
+		keys, _ := extractKeysFromTransaction(payload.Data)
+
+		// Hash Functions
+		numHashFuncs := 22
+		numBits := len(bloomFilter) * 8
+		hashFuncs := generateHashFuncs(numHashFuncs)
+
+		for _, key := range keys {
+			keyBytes := []byte(key)
+			for _, hashFunc := range hashFuncs {
+				index := hashFunc(keyBytes) % uint32(numBits)
+				byteIndex := index / 8
+				bitIndex := index % 8
+				bloomFilter[byteIndex] |= 1 << bitIndex
+			}
+
+		}
+	}
+
+	block.Metadata.Metadata = append(block.Metadata.Metadata, bloomFilter)
 
 	return block
+}
+
+// Custom Function for Extracting Keys from Transaction
+func extractKeysFromTransaction(txPayloadData []byte) ([]string, error) {
+	var keys []string
+
+	payload, err := protoutil.UnmarshalPayload(txPayloadData)
+	if err != nil {
+		return nil, err
+	}
+
+	txEnvelope, err := protoutil.UnmarshalEnvelope(payload.Data)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := protoutil.UnmarshalTransaction(txEnvelope.Payload)
+	if err != nil {
+		return nil, err
+	}
+
+	actions := tx.GetActions()
+
+	for _, action := range actions {
+		ccActionPayload, err := protoutil.UnmarshalChaincodeActionPayload(action.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal chaincode action payload: %v", err)
+		}
+
+		propRespPayload, err := protoutil.UnmarshalProposalResponsePayload(ccActionPayload.Action.ProposalResponsePayload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal proposal response payload: %v", err)
+		}
+
+		caPayload, err := protoutil.UnmarshalChaincodeAction(propRespPayload.Extension)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal chaincode actions: %v", err)
+		}
+
+		txRWSet := &rwsetutil.TxRwSet{}
+		if err = txRWSet.FromProtoBytes(caPayload.Results); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal read-write set: %v", err)
+		}
+
+		for _, nsRWSet := range txRWSet.NsRwSets {
+			for _, kvWrite := range nsRWSet.KvRwSet.Writes {
+				keys = append(keys, kvWrite.Key)
+			}
+		}
+	}
+
+	return keys, nil
+}
+
+// Custom function to produce hash functions
+func generateHashFuncs(numHashFuncs int) []func([]byte) uint32 {
+	hashFuncs := make([]func([]byte) uint32, numHashFuncs)
+
+	for i := 0; i < numHashFuncs; i++ {
+		seed1 := generateRandomUint32()
+		seed2 := generateRandomUint32()
+
+		hasher1 := fnv.New32a()
+		hasher2 := fnv.New32a()
+
+		hashFuncs[i] = func(data []byte) uint32 {
+			hasher1.Reset()
+			hasher2.Reset()
+
+			hasher1.Write(data)
+			hasher2.Write(data)
+
+			h1 := hasher1.Sum32() ^ seed1
+			h2 := hasher2.Sum32() ^ seed2
+
+			return h1 ^ h2
+		}
+	}
+
+	return hashFuncs
+}
+
+func generateRandomUint32() uint32 {
+	var buf [4]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		panic(err)
+	}
+	return binary.BigEndian.Uint32(buf[:])
 }
 
 // WriteConfigBlock should be invoked for blocks which contain a config transaction.
