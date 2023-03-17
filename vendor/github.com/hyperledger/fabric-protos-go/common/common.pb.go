@@ -120,6 +120,7 @@ const (
 	BlockMetadataIndex_TRANSACTIONS_FILTER BlockMetadataIndex = 2
 	BlockMetadataIndex_ORDERER             BlockMetadataIndex = 3 // Deprecated: Do not use.
 	BlockMetadataIndex_COMMIT_HASH         BlockMetadataIndex = 4
+	BlockMetadataIndex_BLOOM               BlockMetadataIndex = 5
 )
 
 var BlockMetadataIndex_name = map[int32]string{
@@ -128,6 +129,7 @@ var BlockMetadataIndex_name = map[int32]string{
 	2: "TRANSACTIONS_FILTER",
 	3: "ORDERER",
 	4: "COMMIT_HASH",
+	5: "BLOOM",
 }
 
 var BlockMetadataIndex_value = map[string]int32{
@@ -136,6 +138,7 @@ var BlockMetadataIndex_value = map[string]int32{
 	"TRANSACTIONS_FILTER": 2,
 	"ORDERER":             3,
 	"COMMIT_HASH":         4,
+	"BLOOM":               5,
 }
 
 func (x BlockMetadataIndex) String() string {
@@ -659,7 +662,6 @@ type BlockHeader struct {
 	Number               uint64   `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
 	PreviousHash         []byte   `protobuf:"bytes,2,opt,name=previous_hash,json=previousHash,proto3" json:"previous_hash,omitempty"`
 	DataHash             []byte   `protobuf:"bytes,3,opt,name=data_hash,json=dataHash,proto3" json:"data_hash,omitempty"`
-	InterFilter          []byte   `protobuf:"bytes,4,opt,name=inter_filter,json=interFilter,proto3" json:"inter_filter,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -707,13 +709,6 @@ func (m *BlockHeader) GetPreviousHash() []byte {
 func (m *BlockHeader) GetDataHash() []byte {
 	if m != nil {
 		return m.DataHash
-	}
-	return nil
-}
-
-func (m *BlockHeader) GetInterFilter() []byte {
-	if m != nil {
-		return m.InterFilter
 	}
 	return nil
 }

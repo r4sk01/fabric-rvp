@@ -83,6 +83,9 @@ func (bw *BlockWriter) CreateNextBlock(messages []*cb.Envelope) *cb.Block {
 	block.Header.DataHash = protoutil.BlockDataHash(data)
 	block.Data = data
 
+	additionalData := make([]byte, 16*1024) // 16Kb of zeros
+	block.Metadata.Metadata = append(block.Metadata.Metadata, additionalData)
+
 	return block
 }
 
