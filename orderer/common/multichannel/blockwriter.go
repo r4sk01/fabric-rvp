@@ -7,12 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
-	"crypto/rand"
-	"encoding/binary"
+	"bytes"
 	"fmt"
-	"hash/fnv"
-	"sync"
-
 	"github.com/golang/protobuf/proto"
 	cb "github.com/hyperledger/fabric-protos-go/common"
 	newchannelconfig "github.com/hyperledger/fabric/common/channelconfig"
@@ -22,6 +18,9 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/identity"
 	"github.com/hyperledger/fabric/protoutil"
+	"github.com/willf/bloom"
+	"log"
+	"sync"
 )
 
 type blockWriterSupport interface {
@@ -92,7 +91,9 @@ func (bw *BlockWriter) CreateNextBlock(messages []*cb.Envelope) *cb.Block {
 	// New Part Starts Here
 	// ==================================================
 
-	bloomFilter := make([]byte, 16*1024) // 16Kb of zeros
+	// bloomFilter := make([]byte, 16*1024) // 16Kb of zeros
+
+	bloomFilter := bloom.New(16*8*1024, 25)
 
 	// Iterate through the messages in the block
 	for _, msg := range messages {
@@ -105,23 +106,31 @@ func (bw *BlockWriter) CreateNextBlock(messages []*cb.Envelope) *cb.Block {
 		keys, _ := extractKeysFromTransaction(payload.Data)
 
 		// Hash Functions
-		numHashFuncs := 22
-		numBits := len(bloomFilter) * 8
-		hashFuncs := generateHashFuncs(numHashFuncs)
+		// numHashFuncs := 22
+		// numBits := len(bloomFilter) * 8
+		// hashFuncs := generateHashFuncs(numHashFuncs)
 
 		for _, key := range keys {
-			keyBytes := []byte(key)
-			for _, hashFunc := range hashFuncs {
-				index := hashFunc(keyBytes) % uint32(numBits)
-				byteIndex := index / 8
-				bitIndex := index % 8
-				bloomFilter[byteIndex] |= 1 << bitIndex
-			}
+			// keyBytes := []byte(key)
+			// for _, hashFunc := range hashFuncs {
+			// index := hashFunc(keyBytes) % uint32(numBits)
+			// byteIndex := index / 8
+			// bitIndex := index % 8
+			// bloomFilter[byteIndex] |= 1 << bitIndex
+			// }
+			bloomFilter.Add([]byte(key))
 
 		}
 	}
+	// Convert the bloom filter to a byte array
+	var buf bytes.Buffer
+	_, err = bloomFilter.WriteTo(&buf)
+	if err != nil {
+		log.Fatalf("Error while serializing bloom filter: %v", err)
+	}
+	serializedBloomFilter := buf.Bytes()
 
-	block.Metadata.Metadata = append(block.Metadata.Metadata, bloomFilter)
+	block.Metadata.Metadata = append(block.Metadata.Metadata, serializedBloomFilter)
 
 	return block
 }
@@ -179,6 +188,7 @@ func extractKeysFromTransaction(txPayloadData []byte) ([]string, error) {
 }
 
 // Custom function to produce hash functions
+/*
 func generateHashFuncs(numHashFuncs int) []func([]byte) uint32 {
 	hashFuncs := make([]func([]byte) uint32, numHashFuncs)
 
@@ -213,6 +223,7 @@ func generateRandomUint32() uint32 {
 	}
 	return binary.BigEndian.Uint32(buf[:])
 }
+*/
 
 // WriteConfigBlock should be invoked for blocks which contain a config transaction.
 // This call will block until the new config has taken effect, then will return
