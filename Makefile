@@ -44,12 +44,12 @@
 #   - unit-test - runs the go-test based unit tests
 #   - verify - runs unit tests for only the changed package tree
 
-ALPINE_VER ?= 3.16
-BASE_VERSION = 2.2.10
+ALPINE_VER ?= 3.12
+BASE_VERSION = 2.2.2
 
 # 3rd party image version
 # These versions are also set in the runners in ./integration/runners/
-COUCHDB_VER ?= 3.2.2
+COUCHDB_VER ?= 3.1
 KAFKA_VER ?= 5.3.1
 ZOOKEEPER_VER ?= 5.3.1
 
@@ -76,7 +76,7 @@ METADATA_VAR += CommitSHA=$(EXTRA_VERSION)
 METADATA_VAR += BaseDockerLabel=$(BASE_DOCKER_LABEL)
 METADATA_VAR += DockerNamespace=$(DOCKER_NS)
 
-GO_VER = 1.18.7
+GO_VER = 1.14.12
 GO_TAGS ?=
 
 RELEASE_EXES = orderer $(TOOLS_EXES)
@@ -138,7 +138,7 @@ check-go-version:
 
 .PHONY: integration-test
 integration-test: integration-test-prereqs
-	./scripts/run-integration-tests.sh $(INTEGRATION_TEST_SUITE)
+	./scripts/run-integration-tests.sh
 
 .PHONY: integration-test-prereqs
 integration-test-prereqs: gotool.ginkgo baseos-docker ccenv-docker docker-thirdparty
@@ -206,7 +206,7 @@ $(BUILD_DIR)/bin/%: GO_LDFLAGS = $(METADATA_VAR:%=-X $(PKGNAME)/common/metadata.
 $(BUILD_DIR)/bin/%:
 	@echo "Building $@"
 	@mkdir -p $(@D)
-	GOBIN=$(abspath $(@D)) go install -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" -buildvcs=false $(pkgmap.$(@F))
+	GOBIN=$(abspath $(@D)) go install -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" $(pkgmap.$(@F))
 	@touch $@
 
 .PHONY: docker
@@ -227,10 +227,10 @@ $(BUILD_DIR)/images/%/$(DUMMY):
 		--build-arg GO_VER=$(GO_VER) \
 		--build-arg ALPINE_VER=$(ALPINE_VER) \
 		$(BUILD_ARGS) \
-		-t $(DOCKER_NS)/fabric-$* ./$(BUILD_CONTEXT)
-	docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(BASE_VERSION)
-	docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(TWO_DIGIT_VERSION)
-	docker tag $(DOCKER_NS)/fabric-$* $(DOCKER_NS)/fabric-$*:$(DOCKER_TAG)
+		-t $(DOCKER_NS)/fabric-sai-$* ./$(BUILD_CONTEXT)
+	docker tag $(DOCKER_NS)/fabric-sai-$* $(DOCKER_NS)/fabric-sai-$*:$(BASE_VERSION)
+	# docker tag $(DOCKER_NS)/fabric-rvp-$* $(DOCKER_NS)/fabric-rvp-$*:$(TWO_DIGIT_VERSION)
+	# docker tag $(DOCKER_NS)/fabric-rvp-$* $(DOCKER_NS)/fabric-rvp-$*:$(DOCKER_TAG)
 	@touch $@
 
 # builds release packages for the host platform
@@ -252,7 +252,7 @@ $(foreach platform, $(RELEASE_PLATFORMS), $(RELEASE_EXES:%=release/$(platform)/b
 	$(eval GOARCH = $(word 2,$(subst -, ,$(platform))))
 	@echo "Building $@ for $(GOOS)-$(GOARCH)"
 	mkdir -p $(@D)
-	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $@ -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" -buildvcs=false $(pkgmap.$(@F))
+	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $@ -tags "$(GO_TAGS)" -ldflags "$(GO_LDFLAGS)" $(pkgmap.$(@F))
 
 .PHONY: dist
 dist: dist-clean dist/$(MARCH)
@@ -319,10 +319,3 @@ unit-test-clean:
 .PHONY: filename-spaces
 spaces:
 	@scripts/check_file_name_spaces.sh
-
-.PHONY: scan
-scan: scan-govulncheck
-
-.PHONY: scan-govulncheck
-scan-govulncheck: gotool.govulncheck
-	govulncheck ./...
