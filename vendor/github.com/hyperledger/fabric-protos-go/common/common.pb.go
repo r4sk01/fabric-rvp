@@ -120,6 +120,8 @@ const (
 	BlockMetadataIndex_TRANSACTIONS_FILTER BlockMetadataIndex = 2
 	BlockMetadataIndex_ORDERER             BlockMetadataIndex = 3 // Deprecated: Do not use.
 	BlockMetadataIndex_COMMIT_HASH         BlockMetadataIndex = 4
+	BlockMetadataIndex_LOCAL_DIGEST        BlockMetadataIndex = 5
+	BlockMetadataIndex_GLOBAL_DIGEST       BlockMetadataIndex = 6
 )
 
 var BlockMetadataIndex_name = map[int32]string{
@@ -128,6 +130,8 @@ var BlockMetadataIndex_name = map[int32]string{
 	2: "TRANSACTIONS_FILTER",
 	3: "ORDERER",
 	4: "COMMIT_HASH",
+	5: "LOCAL_DIGEST",
+	6: "GLOBAL_DIGEST",
 }
 
 var BlockMetadataIndex_value = map[string]int32{
@@ -136,6 +140,8 @@ var BlockMetadataIndex_value = map[string]int32{
 	"TRANSACTIONS_FILTER": 2,
 	"ORDERER":             3,
 	"COMMIT_HASH":         4,
+	"LOCAL_DIGEST":        5,
+	"GLOBAL_DIGEST":       6,
 }
 
 func (x BlockMetadataIndex) String() string {
@@ -659,6 +665,8 @@ type BlockHeader struct {
 	Number               uint64   `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
 	PreviousHash         []byte   `protobuf:"bytes,2,opt,name=previous_hash,json=previousHash,proto3" json:"previous_hash,omitempty"`
 	DataHash             []byte   `protobuf:"bytes,3,opt,name=data_hash,json=dataHash,proto3" json:"data_hash,omitempty"`
+	LocalHash            []byte   `protobuf:"bytes,4,opt,name=local_hash,json=localHash,proto3" json:"local_hash,omitempty"`
+	GlobalHash           []byte   `protobuf:"bytes,5,opt,name=global_hash,json=globalHash,proto3" json:"global_hash,omitempty"`
 	XXX_NoUnkeyedLiteral struct{} `json:"-"`
 	XXX_unrecognized     []byte   `json:"-"`
 	XXX_sizecache        int32    `json:"-"`
@@ -706,6 +714,20 @@ func (m *BlockHeader) GetPreviousHash() []byte {
 func (m *BlockHeader) GetDataHash() []byte {
 	if m != nil {
 		return m.DataHash
+	}
+	return nil
+}
+
+func (x *BlockHeader) GetLocalHash() []byte {
+	if x != nil {
+		return x.LocalHash
+	}
+	return nil
+}
+
+func (x *BlockHeader) GetGlobalHash() []byte {
+	if x != nil {
+		return x.GlobalHash
 	}
 	return nil
 }
