@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package history
 
 import (
+	"encoding/json"
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -17,9 +18,15 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	protoutil "github.com/hyperledger/fabric/protoutil"
+	"log"
+	"os"
 )
 
 var logger = flogging.MustGetLogger("history")
+
+type DataKey struct {
+	DataKey string `json:"dataKey"`
+}
 
 // DBProvider provides handle to HistoryDB for a given channel
 type DBProvider struct {
@@ -75,6 +82,18 @@ func (d *DB) Commit(block *common.Block) error {
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))
 
+	// Open the file in append mode or create
+	file, err := os.OpenFile("/var/SAIStorage/saiStorage.json", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}(file)
+
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
 
@@ -120,6 +139,26 @@ func (d *DB) Commit(block *common.Block) error {
 
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
+
+					// Create a new DataKey instance and set its DataKey field
+					dk := DataKey{DataKey: string(dataKey)}
+
+					// Convert the DataKey instance to json
+					jsonBytes, err := json.Marshal(dk)
+					if err != nil {
+						log.Println(err)
+					}
+
+					// Write the JSON to the file
+					if _, err := file.Write(jsonBytes); err != nil {
+						log.Println(err)
+					}
+
+					// Write a newline character to the file
+					if _, err := file.WriteString("\n"); err != nil {
+						log.Println(err)
+					}
+
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
 				}
