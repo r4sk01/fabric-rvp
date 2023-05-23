@@ -193,7 +193,7 @@ func (s *ChaincodeStub) PutState(key string, value []byte) error {
 	if err != nil {
 		return nil
 	}	
-	_, err := f.WriteString(key)
+	_, err = f.WriteString(key)
 	if err != nil {
 		return nil
 	}
