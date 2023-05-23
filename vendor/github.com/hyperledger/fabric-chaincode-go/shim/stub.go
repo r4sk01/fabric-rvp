@@ -189,6 +189,14 @@ func (s *ChaincodeStub) PutState(key string, value []byte) error {
 	}
 	// Access public data by setting the collection to empty string
 	collection := ""
+	f, err := os.OpenFile("index.csv", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return nil
+	}	
+	_, err := f.WriteString(key)
+	if err != nil {
+		return nil
+	}
 	return s.handler.handlePutState(collection, key, value, s.ChannelID, s.TxID)
 }
 
