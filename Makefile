@@ -56,6 +56,7 @@ ZOOKEEPER_VER ?= 5.3.1
 # Disable implicit rules
 .SUFFIXES:
 MAKEFLAGS += --no-builtin-rules
+MAKEFLAGS += -buildvcs=false
 
 BUILD_DIR ?= build
 

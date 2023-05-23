@@ -25,7 +25,10 @@ import (
 var logger = flogging.MustGetLogger("history")
 
 type DataKey struct {
-	DataKey string `json:"dataKey"`
+	Namespace   string `json:"namespace"`
+	Key         string `json:"key"`
+	BlockNumber uint64 `json:"blockNumber"`
+	TranNumber  uint64 `json:"tranNumber"`
 }
 
 // DBProvider provides handle to HistoryDB for a given channel
@@ -140,8 +143,13 @@ func (d *DB) Commit(block *common.Block) error {
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
-					// Create a new DataKey instance and set its DataKey field
-					dk := DataKey{DataKey: string(dataKey)}
+					// Create a new DataKey instance and set its fields
+					dk := DataKey{
+						Namespace:   ns,
+						Key:         kvWrite.Key,
+						BlockNumber: blockNo,
+						TranNumber:  tranNo,
+					}
 
 					// Convert the DataKey instance to json
 					jsonBytes, err := json.Marshal(dk)
