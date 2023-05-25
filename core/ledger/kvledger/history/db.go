@@ -25,10 +25,9 @@ import (
 var logger = flogging.MustGetLogger("history")
 
 type DataKey struct {
-	Namespace   string `json:"namespace"`
-	Key         string `json:"key"`
-	BlockNumber uint64 `json:"blockNumber"`
-	TranNumber  uint64 `json:"tranNumber"`
+	Key         string `json:"k"`
+	BlockNumber uint64 `json:"bn"`
+	TranNumber  uint64 `json:"tn"`
 }
 
 // DBProvider provides handle to HistoryDB for a given channel
@@ -145,10 +144,9 @@ func (d *DB) Commit(block *common.Block) error {
 
 					// Create a new DataKey instance and set its fields
 					dk := DataKey{
-						Namespace:   ns,
-						Key:         kvWrite.Key,
-						BlockNumber: blockNo,
-						TranNumber:  tranNo,
+						kvWrite.Key,
+						blockNo,
+						tranNo,
 					}
 
 					// Convert the DataKey instance to json
@@ -157,13 +155,11 @@ func (d *DB) Commit(block *common.Block) error {
 						log.Println(err)
 					}
 
-					// Write the JSON to the file
-					if _, err := file.Write(jsonBytes); err != nil {
-						log.Println(err)
-					}
+					// Convert the JSON bytes to a string and append a newline
+					jsonString := string(jsonBytes) + "\n"
 
 					// Write a newline character to the file
-					if _, err := file.WriteString("\n"); err != nil {
+					if _, err := file.WriteString(jsonString); err != nil {
 						log.Println(err)
 					}
 
