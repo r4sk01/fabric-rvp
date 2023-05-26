@@ -96,6 +96,9 @@ func (d *DB) Commit(block *common.Block) error {
 		}
 	}(file)
 
+	// Create a map to keep track of the latest value of each key
+	lastRecord := make(map[string]DataKey)
+
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
 
@@ -149,6 +152,9 @@ func (d *DB) Commit(block *common.Block) error {
 						tranNo,
 					}
 
+					// Update the lastRecord map
+					lastRecord[kvWrite.Key] = dk
+
 					// Convert the DataKey instance to json
 					jsonBytes, err := json.Marshal(dk)
 					if err != nil {
@@ -185,6 +191,28 @@ func (d *DB) Commit(block *common.Block) error {
 	}
 
 	logger.Debugf("Channel [%s]: Updates committed to history database for blockNo [%v]", d.name, blockNo)
+
+	// After committing the block, serialize the lastRecord map and write it to globalIndex.json
+	indexFile, err := os.OpenFile("/var/SAIStorage/globalIndex.json", os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}(indexFile)
+
+	indexBytes, err := json.Marshal(lastRecord)
+	if err != nil {
+		log.Println(err)
+	}
+
+	if _, err := indexFile.Write(indexBytes); err != nil {
+		log.Println(err)
+	}
+
 	return nil
 }
 
