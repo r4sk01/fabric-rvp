@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	protoutil "github.com/hyperledger/fabric/protoutil"
+	"io/ioutil"
 	"log"
 	"os"
 )
@@ -193,7 +194,7 @@ func (d *DB) Commit(block *common.Block) error {
 	logger.Debugf("Channel [%s]: Updates committed to history database for blockNo [%v]", d.name, blockNo)
 
 	// After committing the block, serialize the lastRecord map and write it to globalIndex.json
-	indexFile, err := os.OpenFile("/var/SAIStorage/globalIndex.json", os.O_CREATE|os.O_WRONLY, 0644)
+	indexFile, err := os.OpenFile("/var/SAIStorage/globalIndex.json", os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		log.Println(err)
 	}
@@ -204,7 +205,25 @@ func (d *DB) Commit(block *common.Block) error {
 		}
 	}(indexFile)
 
-	indexBytes, err := json.Marshal(lastRecord)
+	// NEW
+	indexBytes, err := ioutil.ReadAll(indexFile)
+	if err != nil {
+		log.Println(err)
+	}
+
+	// NEW
+	existingRecords := make(map[string]DataKey)
+	json.Unmarshal(indexBytes, &existingRecords)
+
+	// NEW
+	for key, record := range lastRecord {
+		existingRecords[key] = record
+	}
+
+	// NEW
+	indexFile.Seek(0, 0)
+	indexFile.Truncate(0)
+	indexBytes, err = json.Marshal(existingRecords)
 	if err != nil {
 		log.Println(err)
 	}
