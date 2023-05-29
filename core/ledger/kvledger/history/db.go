@@ -31,6 +31,10 @@ type DataKey struct {
 	TranNumber  uint64 `json:"tn"`
 }
 
+type BlockNumber struct {
+	Bn uint64 `json:"bn"`
+}
+
 // DBProvider provides handle to HistoryDB for a given channel
 type DBProvider struct {
 	leveldbProvider *leveldbhelper.Provider
@@ -98,7 +102,7 @@ func (d *DB) Commit(block *common.Block) error {
 	}(file)
 
 	// Create a map to keep track of the latest value of each key
-	lastRecord := make(map[string]DataKey)
+	blockRecord := make(map[string]BlockNumber)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -153,8 +157,7 @@ func (d *DB) Commit(block *common.Block) error {
 						tranNo,
 					}
 
-					// Update the lastRecord map
-					lastRecord[kvWrite.Key] = dk
+					blockRecord[kvWrite.Key] = BlockNumber{Bn: blockNo}
 
 					// Convert the DataKey instance to json
 					jsonBytes, err := json.Marshal(dk)
@@ -212,11 +215,11 @@ func (d *DB) Commit(block *common.Block) error {
 	}
 
 	// NEW
-	existingRecords := make(map[string]DataKey)
+	existingRecords := make(map[string]BlockNumber)
 	json.Unmarshal(indexBytes, &existingRecords)
 
 	// NEW
-	for key, record := range lastRecord {
+	for key, record := range blockRecord {
 		existingRecords[key] = record
 	}
 
