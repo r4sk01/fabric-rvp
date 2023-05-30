@@ -8,6 +8,11 @@ package history
 
 import (
 	"encoding/json"
+	"io"
+	"log"
+	"os"
+	"strconv"
+
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -18,18 +23,9 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	protoutil "github.com/hyperledger/fabric/protoutil"
-	"log"
-	"os"
 )
 
 var logger = flogging.MustGetLogger("history")
-
-type DataKey struct {
-	Namespace   string `json:"namespace"`
-	Key         string `json:"key"`
-	BlockNumber uint64 `json:"blockNumber"`
-	TranNumber  uint64 `json:"tranNumber"`
-}
 
 // DBProvider provides handle to HistoryDB for a given channel
 type DBProvider struct {
@@ -73,12 +69,28 @@ type DB struct {
 	name    string
 }
 
+// Local index entry struct
+type DataKey struct {
+	Key        string `json:"key"`
+	PrevBlock  uint64 `json:"prev"`
+	TranNumber uint64 `json:"tx"`
+}
+
+func closeFile(file *os.File) {
+	err := file.Close()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
 // Commit implements method in HistoryDB interface
 func (d *DB) Commit(block *common.Block) error {
 
 	blockNo := block.Header.Number
 	//Set the starting tranNo to 0
 	var tranNo uint64
+	// Number of blocks per globalIndex
+	const BLOCKS_PER_GI = 3
 
 	dbBatch := d.levelDB.NewUpdateBatch()
 
@@ -86,16 +98,19 @@ func (d *DB) Commit(block *common.Block) error {
 		d.name, blockNo, len(block.Data.Data))
 
 	// Open the file in append mode or create
-	file, err := os.OpenFile("/var/SAIStorage/saiStorage.json", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	saiFile, err := os.OpenFile("/var/SAI-Storage/saiStorage.json", os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Println(err)
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}(file)
+	defer closeFile(saiFile)
+
+	// Read current SAI into map
+	indexBytes, err := io.ReadAll(saiFile)
+	if err != nil {
+		log.Println(err)
+	}
+	currentSAI := make(map[string]uint64)
+	json.Unmarshal(indexBytes, &currentSAI)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -136,19 +151,56 @@ func (d *DB) Commit(block *common.Block) error {
 			if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
 				return err
 			}
+
+			// Open globalIndex file
+			fileNum := blockNo
+			if blockNo%BLOCKS_PER_GI != 0 {
+				fileNum -= BLOCKS_PER_GI % 2
+			}
+			globalFileName := "/var/GI-Storage/globalIndex-" + strconv.FormatUint(fileNum, 10) + ".json"
+			globalIndexFile, err := os.OpenFile(globalFileName, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Println(err)
+			}
+			defer closeFile(globalIndexFile)
+
+			// Read current global index into map
+			globalBytes, err := io.ReadAll(globalIndexFile)
+			if err != nil {
+				log.Println(err)
+			}
+			currentGI := make(map[string][]string)
+			json.Unmarshal(globalBytes, &currentGI)
+
+			// Open localIndex file
+			localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
+			localIndexFile, err := os.OpenFile(localFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				log.Println(err)
+			}
+			defer closeFile(localIndexFile)
+
 			// add a history record for each write
 			for _, nsRWSet := range txRWSet.NsRwSets {
 				ns := nsRWSet.NameSpace
 
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
+					prev, found := currentSAI[kvWrite.Key]
+					currentSAI[kvWrite.Key] = blockNo
+					// If the key doesn't exist, prev will be the blockNo
+					if !found {
+						prev = blockNo
+					}
+
+					currentGI["keys"] = append(currentGI["keys"], kvWrite.Key)
+
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
 					// Create a new DataKey instance and set its fields
 					dk := DataKey{
-						Namespace:   ns,
-						Key:         kvWrite.Key,
-						BlockNumber: blockNo,
-						TranNumber:  tranNo,
+						Key:        kvWrite.Key,
+						PrevBlock:  prev,
+						TranNumber: tranNo,
 					}
 
 					// Convert the DataKey instance to json
@@ -157,19 +209,37 @@ func (d *DB) Commit(block *common.Block) error {
 						log.Println(err)
 					}
 
-					// Write the JSON to the file
-					if _, err := file.Write(jsonBytes); err != nil {
-						log.Println(err)
-					}
-
-					// Write a newline character to the file
-					if _, err := file.WriteString("\n"); err != nil {
+					jsonString := string(jsonBytes) + "\n"
+					_, err = localIndexFile.WriteString(jsonString)
+					if err != nil {
 						log.Println(err)
 					}
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
 				}
+			}
+			globalIndexFile.Seek(0, 0)
+			globalIndexFile.Truncate(0)
+			jsonBytes, err := json.Marshal(currentGI)
+			if err != nil {
+				log.Println(err)
+			}
+			_, err = globalIndexFile.Write(jsonBytes)
+			if err != nil {
+				log.Println(err)
+			}
+
+			saiFile.Seek(0, 0)
+			saiFile.Truncate(0)
+			indexBytes, err = json.Marshal(currentSAI)
+			if err != nil {
+				log.Println(err)
+			}
+
+			_, err = saiFile.Write(indexBytes)
+			if err != nil {
+				log.Println(err)
 			}
 
 		} else {
