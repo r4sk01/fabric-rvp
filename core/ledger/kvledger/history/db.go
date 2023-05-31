@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"sync"
 
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -76,8 +77,26 @@ type DataKey struct {
 	TranNumber uint64 `json:"tx"`
 }
 
-func closeFile(file *os.File) {
-	err := file.Close()
+// Lockable file
+type MutexFile struct {
+	lock sync.RWMutex
+	file *os.File
+}
+
+func openMutexFile(filename string, mode int, permission int) *MutexFile {
+	filePointer, err := os.OpenFile(filename, mode, os.FileMode(permission))
+	if err != nil {
+		log.Println(err)
+	}
+	mutexFile := &MutexFile{
+		lock: sync.RWMutex{},
+		file: filePointer,
+	}
+	return mutexFile
+}
+
+func closeFile(mf *MutexFile) {
+	err := mf.file.Close()
 	if err != nil {
 		log.Println(err)
 	}
@@ -89,28 +108,24 @@ func (d *DB) Commit(block *common.Block) error {
 	blockNo := block.Header.Number
 	//Set the starting tranNo to 0
 	var tranNo uint64
-	// Number of blocks per globalIndex
-	const BLOCKS_PER_GI = 3
 
 	dbBatch := d.levelDB.NewUpdateBatch()
 
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))
 
-	// Open the file in append mode or create
-	saiFile, err := os.OpenFile("/var/SAI-Storage/saiStorage.json", os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Println(err)
-	}
-	defer closeFile(saiFile)
+	globalIndexFile := openMutexFile("/var/GI-Storage/globalIndex.json", os.O_CREATE|os.O_WRONLY, 0644)
+	defer closeFile(globalIndexFile)
 
-	// Read current SAI into map
-	indexBytes, err := io.ReadAll(saiFile)
+	// Read current Global Index into map
+	globalIndexFile.lock.RLock()
+	indexBytes, err := io.ReadAll(globalIndexFile.file)
 	if err != nil {
 		log.Println(err)
 	}
-	currentSAI := make(map[string]uint64)
-	json.Unmarshal(indexBytes, &currentSAI)
+	globalIndexFile.lock.RUnlock()
+	lastGI := make(map[string]uint64)
+	json.Unmarshal(indexBytes, &lastGI)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -152,29 +167,9 @@ func (d *DB) Commit(block *common.Block) error {
 				return err
 			}
 
-			// Open globalIndex file
-			fileNum := blockNo
-			if blockNo%BLOCKS_PER_GI != 0 {
-				fileNum -= BLOCKS_PER_GI % 2
-			}
-			globalFileName := "/var/GI-Storage/globalIndex-" + strconv.FormatUint(fileNum, 10) + ".json"
-			globalIndexFile, err := os.OpenFile(globalFileName, os.O_CREATE|os.O_WRONLY, 0644)
-			if err != nil {
-				log.Println(err)
-			}
-			defer closeFile(globalIndexFile)
-
-			// Read current global index into map
-			globalBytes, err := io.ReadAll(globalIndexFile)
-			if err != nil {
-				log.Println(err)
-			}
-			currentGI := make(map[string][]string)
-			json.Unmarshal(globalBytes, &currentGI)
-
 			// Open localIndex file
 			localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
-			localIndexFile, err := os.OpenFile(localFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			localIndexFile := openMutexFile(localFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 			if err != nil {
 				log.Println(err)
 			}
@@ -185,14 +180,12 @@ func (d *DB) Commit(block *common.Block) error {
 				ns := nsRWSet.NameSpace
 
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
-					prev, found := currentSAI[kvWrite.Key]
-					currentSAI[kvWrite.Key] = blockNo
+					prev, found := lastGI[kvWrite.Key]
+					lastGI[kvWrite.Key] = blockNo
 					// If the key doesn't exist, prev will be the blockNo
 					if !found {
 						prev = blockNo
 					}
-
-					currentGI["keys"] = append(currentGI["keys"], kvWrite.Key)
 
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
@@ -210,37 +203,45 @@ func (d *DB) Commit(block *common.Block) error {
 					}
 
 					jsonString := string(jsonBytes) + "\n"
-					_, err = localIndexFile.WriteString(jsonString)
+
+					localIndexFile.lock.Lock()
+					_, err = localIndexFile.file.WriteString(jsonString)
 					if err != nil {
 						log.Println(err)
 					}
+					localIndexFile.lock.Unlock()
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
 				}
 			}
-			globalIndexFile.Seek(0, 0)
-			globalIndexFile.Truncate(0)
-			jsonBytes, err := json.Marshal(currentGI)
-			if err != nil {
-				log.Println(err)
-			}
-			_, err = globalIndexFile.Write(jsonBytes)
+
+			// Lock Global Index file
+			globalIndexFile.lock.Lock()
+			indexBytes, err = io.ReadAll(globalIndexFile.file)
 			if err != nil {
 				log.Println(err)
 			}
 
-			saiFile.Seek(0, 0)
-			saiFile.Truncate(0)
-			indexBytes, err = json.Marshal(currentSAI)
+			currentGI := make(map[string]uint64)
+			json.Unmarshal(indexBytes, &currentGI)
+
+			for key, record := range lastGI {
+				currentGI[key] = record
+			}
+
+			globalIndexFile.file.Seek(0, 0)
+			globalIndexFile.file.Truncate(0)
+			indexBytes, err = json.Marshal(lastGI)
 			if err != nil {
 				log.Println(err)
 			}
 
-			_, err = saiFile.Write(indexBytes)
+			_, err = globalIndexFile.file.Write(indexBytes)
 			if err != nil {
 				log.Println(err)
 			}
+			globalIndexFile.lock.Unlock()
 
 		} else {
 			logger.Debugf("Skipping transaction [%d] since it is not an endorsement transaction\n", tranNo)
