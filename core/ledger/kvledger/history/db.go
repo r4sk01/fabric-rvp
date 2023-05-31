@@ -12,7 +12,7 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"sync"
+	"syscall"
 
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
@@ -77,26 +77,16 @@ type DataKey struct {
 	TranNumber uint64 `json:"tx"`
 }
 
-// Lockable file
-type MutexFile struct {
-	lock sync.RWMutex
-	file *os.File
+func lockFile(file *os.File) {
+	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 }
 
-func openMutexFile(filename string, mode int, permission int) *MutexFile {
-	filePointer, err := os.OpenFile(filename, mode, os.FileMode(permission))
-	if err != nil {
-		log.Println(err)
-	}
-	mutexFile := &MutexFile{
-		lock: sync.RWMutex{},
-		file: filePointer,
-	}
-	return mutexFile
+func unlockFile(file *os.File) {
+	syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 }
 
-func closeFile(mf *MutexFile) {
-	err := mf.file.Close()
+func closeFile(file *os.File) {
+	err := file.Close()
 	if err != nil {
 		log.Println(err)
 	}
@@ -114,18 +104,29 @@ func (d *DB) Commit(block *common.Block) error {
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))
 
-	globalIndexFile := openMutexFile("/var/GI-Storage/globalIndex.json", os.O_CREATE|os.O_WRONLY, 0644)
-	defer closeFile(globalIndexFile)
-
-	// Read current Global Index into map
-	globalIndexFile.lock.RLock()
-	indexBytes, err := io.ReadAll(globalIndexFile.file)
+	globalIndexFile, err := os.OpenFile("/var/GI-Storage/globalIndex.json", os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		log.Println(err)
 	}
-	globalIndexFile.lock.RUnlock()
+	defer closeFile(globalIndexFile)
+
+	// Read current Global Index into map
+	lockFile(globalIndexFile)
+	indexBytes, err := io.ReadAll(globalIndexFile)
+	if err != nil {
+		log.Println(err)
+	}
+	unlockFile(globalIndexFile)
 	lastGI := make(map[string]uint64)
 	json.Unmarshal(indexBytes, &lastGI)
+
+	// Open localIndex file
+	localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
+	localIndexFile, err := os.OpenFile(localFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer closeFile(localIndexFile)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -167,14 +168,6 @@ func (d *DB) Commit(block *common.Block) error {
 				return err
 			}
 
-			// Open localIndex file
-			localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
-			localIndexFile := openMutexFile(localFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err != nil {
-				log.Println(err)
-			}
-			defer closeFile(localIndexFile)
-
 			// add a history record for each write
 			for _, nsRWSet := range txRWSet.NsRwSets {
 				ns := nsRWSet.NameSpace
@@ -204,50 +197,50 @@ func (d *DB) Commit(block *common.Block) error {
 
 					jsonString := string(jsonBytes) + "\n"
 
-					localIndexFile.lock.Lock()
-					_, err = localIndexFile.file.WriteString(jsonString)
+					lockFile(localIndexFile)
+					_, err = localIndexFile.WriteString(jsonString)
 					if err != nil {
 						log.Println(err)
 					}
-					localIndexFile.lock.Unlock()
+					unlockFile(localIndexFile)
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
 				}
 			}
 
-			// Lock Global Index file
-			globalIndexFile.lock.Lock()
-			indexBytes, err = io.ReadAll(globalIndexFile.file)
-			if err != nil {
-				log.Println(err)
-			}
-
-			currentGI := make(map[string]uint64)
-			json.Unmarshal(indexBytes, &currentGI)
-
-			for key, record := range lastGI {
-				currentGI[key] = record
-			}
-
-			globalIndexFile.file.Seek(0, 0)
-			globalIndexFile.file.Truncate(0)
-			indexBytes, err = json.Marshal(lastGI)
-			if err != nil {
-				log.Println(err)
-			}
-
-			_, err = globalIndexFile.file.Write(indexBytes)
-			if err != nil {
-				log.Println(err)
-			}
-			globalIndexFile.lock.Unlock()
-
 		} else {
 			logger.Debugf("Skipping transaction [%d] since it is not an endorsement transaction\n", tranNo)
 		}
 		tranNo++
 	}
+
+	// Lock Global Index file
+	lockFile(globalIndexFile)
+	indexBytes, err = io.ReadAll(globalIndexFile)
+	if err != nil {
+		log.Println(err)
+	}
+
+	currentGI := make(map[string]uint64)
+	json.Unmarshal(indexBytes, &currentGI)
+
+	for key, record := range lastGI {
+		currentGI[key] = record
+	}
+
+	globalIndexFile.Seek(0, 0)
+	globalIndexFile.Truncate(0)
+	indexBytes, err = json.Marshal(currentGI)
+	if err != nil {
+		log.Println(err)
+	}
+
+	_, err = globalIndexFile.Write(indexBytes)
+	if err != nil {
+		log.Println(err)
+	}
+	unlockFile(globalIndexFile)
 
 	// add savepoint for recovery purpose
 	height := version.NewHeight(blockNo, tranNo)
