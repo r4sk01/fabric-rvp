@@ -8,6 +8,12 @@ package history
 
 import (
 	"encoding/json"
+	"io"
+	"log"
+	"os"
+	"strconv"
+	"syscall"
+
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -18,22 +24,9 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/internal/pkg/txflags"
 	protoutil "github.com/hyperledger/fabric/protoutil"
-	"io/ioutil"
-	"log"
-	"os"
 )
 
 var logger = flogging.MustGetLogger("history")
-
-type DataKey struct {
-	Key         string `json:"k"`
-	BlockNumber uint64 `json:"bn"`
-	TranNumber  uint64 `json:"tn"`
-}
-
-type BlockNumber struct {
-	Bn uint64 `json:"bn"`
-}
 
 // DBProvider provides handle to HistoryDB for a given channel
 type DBProvider struct {
@@ -77,6 +70,28 @@ type DB struct {
 	name    string
 }
 
+// DataKey Local index entry struct
+type DataKey struct {
+	Key        string `json:"key"`
+	PrevBlock  uint64 `json:"prev"`
+	TranNumber uint64 `json:"tx"`
+}
+
+func lockFile(file *os.File) {
+	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
+}
+
+func unlockFile(file *os.File) {
+	syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+}
+
+func closeFile(file *os.File) {
+	err := file.Close()
+	if err != nil {
+		log.Println(err)
+	}
+}
+
 // Commit implements method in HistoryDB interface
 func (d *DB) Commit(block *common.Block) error {
 
@@ -89,20 +104,29 @@ func (d *DB) Commit(block *common.Block) error {
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))
 
-	// Open the file in append mode or create
-	file, err := os.OpenFile("/var/SAIStorage/saiStorage.json", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	globalIndexFile, err := os.OpenFile("/var/GI-Storage/globalIndex.json", os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		log.Println(err)
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}(file)
+	defer closeFile(globalIndexFile)
 
-	// Create a map to keep track of the latest value of each key
-	blockRecord := make(map[string]BlockNumber)
+	// Read current Global Index into map
+	lockFile(globalIndexFile)
+	indexBytes, err := io.ReadAll(globalIndexFile)
+	if err != nil {
+		log.Println(err)
+	}
+	unlockFile(globalIndexFile)
+	lastGI := make(map[string]uint64)
+	json.Unmarshal(indexBytes, &lastGI)
+
+	// Open localIndex file
+	localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
+	localIndexFile, err := os.OpenFile(localFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer closeFile(localIndexFile)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -143,21 +167,27 @@ func (d *DB) Commit(block *common.Block) error {
 			if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
 				return err
 			}
+
 			// add a history record for each write
 			for _, nsRWSet := range txRWSet.NsRwSets {
 				ns := nsRWSet.NameSpace
 
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
+					prev, found := lastGI[kvWrite.Key]
+					lastGI[kvWrite.Key] = blockNo
+					// If the key doesn't exist, prev will be the blockNo
+					if !found {
+						prev = blockNo
+					}
+
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
 					// Create a new DataKey instance and set its fields
 					dk := DataKey{
-						kvWrite.Key,
-						blockNo,
-						tranNo,
+						Key:        kvWrite.Key,
+						PrevBlock:  prev,
+						TranNumber: tranNo,
 					}
-
-					blockRecord[kvWrite.Key] = BlockNumber{Bn: blockNo}
 
 					// Convert the DataKey instance to json
 					jsonBytes, err := json.Marshal(dk)
@@ -165,13 +195,14 @@ func (d *DB) Commit(block *common.Block) error {
 						log.Println(err)
 					}
 
-					// Convert the JSON bytes to a string and append a newline
 					jsonString := string(jsonBytes) + "\n"
 
-					// Write a newline character to the file
-					if _, err := file.WriteString(jsonString); err != nil {
+					lockFile(localIndexFile)
+					_, err = localIndexFile.WriteString(jsonString)
+					if err != nil {
 						log.Println(err)
 					}
+					unlockFile(localIndexFile)
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
@@ -184,6 +215,33 @@ func (d *DB) Commit(block *common.Block) error {
 		tranNo++
 	}
 
+	// Lock Global Index file
+	lockFile(globalIndexFile)
+	indexBytes, err = io.ReadAll(globalIndexFile)
+	if err != nil {
+		log.Println(err)
+	}
+
+	currentGI := make(map[string]uint64)
+	json.Unmarshal(indexBytes, &currentGI)
+
+	for key, record := range lastGI {
+		currentGI[key] = record
+	}
+
+	globalIndexFile.Seek(0, 0)
+	globalIndexFile.Truncate(0)
+	indexBytes, err = json.Marshal(currentGI)
+	if err != nil {
+		log.Println(err)
+	}
+
+	_, err = globalIndexFile.Write(indexBytes)
+	if err != nil {
+		log.Println(err)
+	}
+	unlockFile(globalIndexFile)
+
 	// add savepoint for recovery purpose
 	height := version.NewHeight(blockNo, tranNo)
 	dbBatch.Put(savePointKey, height.ToBytes())
@@ -195,46 +253,6 @@ func (d *DB) Commit(block *common.Block) error {
 	}
 
 	logger.Debugf("Channel [%s]: Updates committed to history database for blockNo [%v]", d.name, blockNo)
-
-	// After committing the block, serialize the lastRecord map and write it to globalIndex.json
-	indexFile, err := os.OpenFile("/var/SAIStorage/globalIndex.json", os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		log.Println(err)
-	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}(indexFile)
-
-	// NEW
-	indexBytes, err := ioutil.ReadAll(indexFile)
-	if err != nil {
-		log.Println(err)
-	}
-
-	// NEW
-	existingRecords := make(map[string]BlockNumber)
-	json.Unmarshal(indexBytes, &existingRecords)
-
-	// NEW
-	for key, record := range blockRecord {
-		existingRecords[key] = record
-	}
-
-	// NEW
-	indexFile.Seek(0, 0)
-	indexFile.Truncate(0)
-	indexBytes, err = json.Marshal(existingRecords)
-	if err != nil {
-		log.Println(err)
-	}
-
-	if _, err := indexFile.Write(indexBytes); err != nil {
-		log.Println(err)
-	}
-
 	return nil
 }
 
