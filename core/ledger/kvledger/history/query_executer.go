@@ -7,6 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package history
 
 import (
+	"bytes"
+	"io"
+	"log"
+	"os"
+	"strconv"
+
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/ledger/queryresult"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
@@ -38,7 +44,7 @@ func (q *QueryExecutor) GetHistoryForKey(namespace string, key string) (commonle
 	if dbItr.Last() {
 		dbItr.Next()
 	}
-	return &historyScanner{rangeScan, namespace, key, dbItr, q.blockStore}, nil
+	return &historyScanner{rangeScan, namespace, key, dbItr, q.blockStore, newSaiIter()}, nil
 }
 
 // historyScanner implements ResultsIterator for iterating through history results
@@ -48,6 +54,56 @@ type historyScanner struct {
 	key        string
 	dbItr      iterator.Iterator
 	blockStore *blkstorage.BlockStore
+	saiIter    func(key string) (uint64, uint64)
+}
+
+func newSaiIter() func(key string) (uint64, uint64) {
+	first := true
+	var prevBlockNum uint64
+	var currBlockNum uint64
+	var tranNum uint64
+	return func(key string) (uint64, uint64) {
+		// If first flag hasn't been set to false, use global index to find most recent block
+		if first {
+			first = false
+			globalIndexFile, err := os.OpenFile("/var/GI-Storage/globalIndex.json", os.O_RDONLY, 0444)
+			if err != nil {
+				log.Println(err)
+			}
+			defer CloseFile(globalIndexFile)
+			LockFile(globalIndexFile)
+			globalBytes, err := io.ReadAll(globalIndexFile)
+			if err != nil {
+				log.Println(err)
+			}
+			UnlockFile(globalIndexFile)
+
+			// TODO: Search & slice
+			index := bytes.LastIndex(globalBytes, []byte(key+"\":"))
+			prevBlockNum = bytes // something
+
+		}
+
+		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(prevBlockNum, 10) + ".json"
+		localIndexFile, err := os.OpenFile(localFileName, os.O_RDONLY, 0444)
+		if err != nil {
+			log.Println(err)
+		}
+		defer CloseFile(localIndexFile)
+		LockFile(localIndexFile)
+		localBytes, err := io.ReadAll(globalIndexFile)
+		if err != nil {
+			log.Println(err)
+		}
+		UnlockFile(localIndexFile)
+
+		// TODO: Search & slice
+		index = bytes.LastIndex(localBytes, []bytes(key+"\":"))
+		currBlockNum = bytes // something
+		prevBlockNum = bytes // something
+
+		return currBlockNum, tranNum
+	}
 }
 
 // Next iterates to the next key, in the order of newest to oldest, from history scanner.
@@ -55,12 +111,15 @@ type historyScanner struct {
 // loads the block:tran from block storage, finds the key and returns the result.
 func (scanner *historyScanner) Next() (commonledger.QueryResult, error) {
 	// call Prev because history query result is returned from newest to oldest
-	if !scanner.dbItr.Prev() {
-		return nil, nil
-	}
+	// if !scanner.dbItr.Prev() {
+	// 	return nil, nil
+	// }
 
-	historyKey := scanner.dbItr.Key()
-	blockNum, tranNum, err := scanner.rangeScan.decodeBlockNumTranNum(historyKey)
+	// historyKey := scanner.dbItr.Key()
+	// blockNum, tranNum, err := scanner.rangeScan.decodeBlockNumTranNum(historyKey)
+
+	blockNum, tranNum := getNextBlockTran(scanner.key)
+
 	if err != nil {
 		return nil, err
 	}
