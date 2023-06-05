@@ -77,6 +77,13 @@ type DataKey struct {
 	TranNumber uint64 `json:"tx"`
 }
 
+// DataKeySai structure
+type DataKeySai struct {
+	Key         string `json:"k"`
+	BlockNumber uint64 `json:"bn"`
+	TranNumber  uint64 `json:"tn"`
+}
+
 func lockFile(file *os.File) {
 	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 }
@@ -96,7 +103,7 @@ func closeFile(file *os.File) {
 func (d *DB) Commit(block *common.Block) error {
 
 	blockNo := block.Header.Number
-	//Set the starting tranNo to 0
+	// SET THE STARTING tranNo to 0
 	var tranNo uint64
 
 	dbBatch := d.levelDB.NewUpdateBatch()
@@ -104,13 +111,26 @@ func (d *DB) Commit(block *common.Block) error {
 	logger.Debugf("Channel [%s]: Updating history database for blockNo [%v] with [%d] transactions",
 		d.name, blockNo, len(block.Data.Data))
 
+	// OPEN THE SAI FILE
+	file, err := os.OpenFile("/var/SAIStorage/saiStorage.json", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Println(err)
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}(file)
+
+	// OPEN THE GLOBAL INDEX FILE
 	globalIndexFile, err := os.OpenFile("/var/GI-Storage/globalIndex.json", os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		log.Println(err)
 	}
 	defer closeFile(globalIndexFile)
 
-	// Read current Global Index into map
+	// READ CURRENT GLOBAL INDEX INTO MAP
 	lockFile(globalIndexFile)
 	indexBytes, err := io.ReadAll(globalIndexFile)
 	if err != nil {
@@ -120,7 +140,7 @@ func (d *DB) Commit(block *common.Block) error {
 	lastGI := make(map[string]uint64)
 	json.Unmarshal(indexBytes, &lastGI)
 
-	// Open localIndex file
+	// OPEN localIndex FILE
 	localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(blockNo, 10) + ".json"
 	localIndexFile, err := os.OpenFile(localFileName, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
@@ -182,6 +202,27 @@ func (d *DB) Commit(block *common.Block) error {
 
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
+					// CREATE A NEW DataKey FOR SAI
+					dkSAI := DataKeySai{
+						kvWrite.Key,
+						blockNo,
+						tranNo,
+					}
+
+					// CONVERT THE DATAKEYSAI INSTANCE TO JSON
+					jsonBytesSAI, err := json.Marshal(dkSAI)
+					if err != nil {
+						log.Println(err)
+					}
+
+					// CONVERT THE JSONBYTESSAI TO A STRING
+					jsonStringSAI := string(jsonBytesSAI) + "\n"
+
+					// WRITE SAI
+					if _, err := file.WriteString(jsonStringSAI); err != nil {
+						log.Println(err)
+					}
+
 					// Create a new DataKey instance and set its fields
 					dk := DataKey{
 						Key:        kvWrite.Key,
@@ -215,7 +256,7 @@ func (d *DB) Commit(block *common.Block) error {
 		tranNo++
 	}
 
-	// Lock Global Index file
+	// LOCK GLOBAL INDEX FILE
 	lockFile(globalIndexFile)
 	indexBytes, err = io.ReadAll(globalIndexFile)
 	if err != nil {
