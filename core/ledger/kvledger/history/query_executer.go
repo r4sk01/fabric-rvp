@@ -95,9 +95,10 @@ func newSaiIter() func(key string) (uint64, uint64) {
 				log.Println(err)
 			}
 			UnlockFile(globalIndexFile)
-			currBlockNum, tranNum = findGlobalBlockNum(globalBytes, key)
+			prevBlockNum, tranNum = findGlobalBlockNum(globalBytes, key)
 		}
-		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(currBlockNum, 10) + ".json"
+		currBlockNum = prevBlockNum
+		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(prevBlockNum, 10) + ".json"
 		localIndexFile, err := os.OpenFile(localFileName, os.O_RDONLY, 0444)
 		if err != nil {
 			log.Println(err)
