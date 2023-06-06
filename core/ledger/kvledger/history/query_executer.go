@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package history
 
 import (
-	"bytes"
+	"encoding/json"
 	"io"
 	"log"
 	"os"
@@ -49,20 +49,41 @@ func (q *QueryExecutor) GetHistoryForKey(namespace string, key string) (commonle
 
 // historyScanner implements ResultsIterator for iterating through history results
 type historyScanner struct {
-	rangeScan  *rangeScan
-	namespace  string
-	key        string
-	dbItr      iterator.Iterator
-	blockStore *blkstorage.BlockStore
-	saiIter    func(key string) (uint64, uint64)
+	rangeScan        *rangeScan
+	namespace        string
+	key              string
+	dbItr            iterator.Iterator
+	blockStore       *blkstorage.BlockStore
+	getNextBlockTran func(key string) (uint64, uint64, error)
 }
 
-func newSaiIter() func(key string) (uint64, uint64) {
+func findGlobalBlockNum(globalBytes []byte, key string) (uint64, uint64) {
+	globalIndex := make(map[string][]uint64)
+	json.Unmarshal(globalBytes, &globalIndex)
+	return globalIndex[key][0], globalIndex[key][1]
+}
+
+func decodeLocalBlockTran(localBytes []byte, key string, tranNum uint64) (uint64, uint64) {
+	localIndex := make(map[LIKey]LIEntry)
+	json.Unmarshal(localBytes, &localIndex)
+
+	entry, found := localIndex[LIKey{Key: key, TranNum: tranNum}]
+	if !found {
+		log.Println("LIKey not found")
+		return 0, 0
+	}
+	return entry.Prev[0], entry.Prev[1]
+}
+
+func newSaiIter() func(key string) (uint64, uint64, error) {
 	first := true
 	var prevBlockNum uint64
 	var currBlockNum uint64
 	var tranNum uint64
-	return func(key string) (uint64, uint64) {
+	return func(key string) (uint64, uint64, error) {
+		if currBlockNum == prevBlockNum && tranNum == 0 {
+			return 0, 0, errors.New("First entry")
+		}
 		// If first flag hasn't been set to false, use global index to find most recent block
 		if first {
 			first = false
@@ -77,32 +98,22 @@ func newSaiIter() func(key string) (uint64, uint64) {
 				log.Println(err)
 			}
 			UnlockFile(globalIndexFile)
-
-			// TODO: Search & slice
-			index := bytes.LastIndex(globalBytes, []byte(key+"\":"))
-			prevBlockNum = bytes // something
-
+			currBlockNum, tranNum = findGlobalBlockNum(globalBytes, key)
 		}
-
-		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(prevBlockNum, 10) + ".json"
+		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(currBlockNum, 10) + ".json"
 		localIndexFile, err := os.OpenFile(localFileName, os.O_RDONLY, 0444)
 		if err != nil {
 			log.Println(err)
 		}
 		defer CloseFile(localIndexFile)
 		LockFile(localIndexFile)
-		localBytes, err := io.ReadAll(globalIndexFile)
+		localBytes, err := io.ReadAll(localIndexFile)
 		if err != nil {
 			log.Println(err)
 		}
 		UnlockFile(localIndexFile)
-
-		// TODO: Search & slice
-		index = bytes.LastIndex(localBytes, []bytes(key+"\":"))
-		currBlockNum = bytes // something
-		prevBlockNum = bytes // something
-
-		return currBlockNum, tranNum
+		prevBlockNum, tranNum = decodeLocalBlockTran(localBytes, key, tranNum)
+		return currBlockNum, tranNum, nil
 	}
 }
 
@@ -118,7 +129,7 @@ func (scanner *historyScanner) Next() (commonledger.QueryResult, error) {
 	// historyKey := scanner.dbItr.Key()
 	// blockNum, tranNum, err := scanner.rangeScan.decodeBlockNumTranNum(historyKey)
 
-	blockNum, tranNum := getNextBlockTran(scanner.key)
+	blockNum, tranNum, err := scanner.getNextBlockTran(scanner.key)
 
 	if err != nil {
 		return nil, err

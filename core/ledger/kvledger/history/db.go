@@ -70,22 +70,30 @@ type DB struct {
 	name    string
 }
 
-// Local index entry struct
-type DataKey struct {
-	Key        string `json:"key"`
-	PrevBlock  uint64 `json:"prev"`
-	TranNumber uint64 `json:"tx"`
+type GIEntry struct {
+	Key       string   `json:"K"`
+	BlockTran []uint64 `json:"b-t"`
 }
 
-func lockFile(file *os.File) {
+type LIKey struct {
+	Key     string `json:"k"`
+	TranNum uint64 `json:"tx"`
+}
+
+type LIEntry struct {
+	Key  LIKey    `json:"k-t"`
+	Prev []uint64 `json:"b-t"`
+}
+
+func LockFile(file *os.File) {
 	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 }
 
-func unlockFile(file *os.File) {
+func UnlockFile(file *os.File) {
 	syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 }
 
-func closeFile(file *os.File) {
+func CloseFile(file *os.File) {
 	err := file.Close()
 	if err != nil {
 		log.Println(err)
@@ -108,16 +116,16 @@ func (d *DB) Commit(block *common.Block) error {
 	if err != nil {
 		log.Println(err)
 	}
-	defer closeFile(globalIndexFile)
+	defer CloseFile(globalIndexFile)
 
 	// Read current Global Index into map
-	lockFile(globalIndexFile)
+	LockFile(globalIndexFile)
 	indexBytes, err := io.ReadAll(globalIndexFile)
 	if err != nil {
 		log.Println(err)
 	}
-	unlockFile(globalIndexFile)
-	lastGI := make(map[string]uint64)
+	UnlockFile(globalIndexFile)
+	lastGI := make(map[string][]uint64)
 	json.Unmarshal(indexBytes, &lastGI)
 
 	// Open localIndex file
@@ -126,7 +134,7 @@ func (d *DB) Commit(block *common.Block) error {
 	if err != nil {
 		log.Println(err)
 	}
-	defer closeFile(localIndexFile)
+	defer CloseFile(localIndexFile)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -173,36 +181,45 @@ func (d *DB) Commit(block *common.Block) error {
 				ns := nsRWSet.NameSpace
 
 				for _, kvWrite := range nsRWSet.KvRwSet.Writes {
-					prev, found := lastGI[kvWrite.Key]
-					lastGI[kvWrite.Key] = blockNo
+					var prevBlock uint64
+					var prevTran uint64
+					blockTran, found := lastGI[kvWrite.Key]
+					lastGI[kvWrite.Key] = []uint64{blockNo, tranNo}
 					// If the key doesn't exist, prev will be the blockNo
 					if !found {
-						prev = blockNo
+						prevBlock = blockNo
+						prevTran = tranNo
+					} else {
+						prevBlock = blockTran[0]
+						prevTran = blockTran[1]
 					}
 
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
-					// Create a new DataKey instance and set its fields
-					dk := DataKey{
-						Key:        kvWrite.Key,
-						PrevBlock:  prev,
-						TranNumber: tranNo,
+					LI := LIKey{
+						Key:     kvWrite.Key,
+						TranNum: tranNo,
 					}
 
-					// Convert the DataKey instance to json
-					jsonBytes, err := json.Marshal(dk)
+					entry := LIEntry{
+						Key:  LI,
+						Prev: []uint64{prevBlock, prevTran},
+					}
+
+					// Convert the DataKeySAI instance to json
+					jsonBytes, err := json.Marshal(entry)
 					if err != nil {
 						log.Println(err)
 					}
 
 					jsonString := string(jsonBytes) + "\n"
 
-					lockFile(localIndexFile)
+					LockFile(localIndexFile)
 					_, err = localIndexFile.WriteString(jsonString)
 					if err != nil {
 						log.Println(err)
 					}
-					unlockFile(localIndexFile)
+					UnlockFile(localIndexFile)
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
@@ -216,13 +233,13 @@ func (d *DB) Commit(block *common.Block) error {
 	}
 
 	// Lock Global Index file
-	lockFile(globalIndexFile)
+	LockFile(globalIndexFile)
 	indexBytes, err = io.ReadAll(globalIndexFile)
 	if err != nil {
 		log.Println(err)
 	}
 
-	currentGI := make(map[string]uint64)
+	currentGI := make(map[string][]uint64)
 	json.Unmarshal(indexBytes, &currentGI)
 
 	for key, record := range lastGI {
@@ -240,7 +257,7 @@ func (d *DB) Commit(block *common.Block) error {
 	if err != nil {
 		log.Println(err)
 	}
-	unlockFile(globalIndexFile)
+	UnlockFile(globalIndexFile)
 
 	// add savepoint for recovery purpose
 	height := version.NewHeight(blockNo, tranNo)
