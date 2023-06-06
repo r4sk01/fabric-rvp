@@ -54,7 +54,7 @@ type historyScanner struct {
 	key              string
 	dbItr            iterator.Iterator
 	blockStore       *blkstorage.BlockStore
-	getNextBlockTran func(key string) (uint64, uint64, error)
+	getNextBlockTran func(key string) (uint64, uint64)
 }
 
 func findGlobalBlockNum(globalBytes []byte, key string) (uint64, uint64) {
@@ -75,15 +75,12 @@ func decodeLocalBlockTran(localBytes []byte, key string, tranNum uint64) (uint64
 	return entry.Prev[0], entry.Prev[1]
 }
 
-func newSaiIter() func(key string) (uint64, uint64, error) {
+func newSaiIter() func(key string) (uint64, uint64) {
 	first := true
 	var prevBlockNum uint64
 	var currBlockNum uint64
 	var tranNum uint64
-	return func(key string) (uint64, uint64, error) {
-		if currBlockNum == prevBlockNum && tranNum == 0 {
-			return 0, 0, errors.New("First entry")
-		}
+	return func(key string) (uint64, uint64) {
 		// If first flag hasn't been set to false, use global index to find most recent block
 		if first {
 			first = false
@@ -113,7 +110,7 @@ func newSaiIter() func(key string) (uint64, uint64, error) {
 		}
 		UnlockFile(localIndexFile)
 		prevBlockNum, tranNum = decodeLocalBlockTran(localBytes, key, tranNum)
-		return currBlockNum, tranNum, nil
+		return currBlockNum, tranNum
 	}
 }
 
@@ -128,12 +125,12 @@ func (scanner *historyScanner) Next() (commonledger.QueryResult, error) {
 
 	// historyKey := scanner.dbItr.Key()
 	// blockNum, tranNum, err := scanner.rangeScan.decodeBlockNumTranNum(historyKey)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
-	blockNum, tranNum, err := scanner.getNextBlockTran(scanner.key)
+	blockNum, tranNum := scanner.getNextBlockTran(scanner.key)
 
-	if err != nil {
-		return nil, err
-	}
 	logger.Debugf("Found history record for namespace:%s key:%s at blockNumTranNum %v:%v\n",
 		scanner.namespace, scanner.key, blockNum, tranNum)
 
