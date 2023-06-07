@@ -70,19 +70,9 @@ type DB struct {
 	name    string
 }
 
-type GIEntry struct {
-	Key       string   `json:"K"`
-	BlockTran []uint64 `json:"b-t"`
-}
-
-type LIKey struct {
-	Key     string `json:"k"`
-	TranNum uint64 `json:"tx"`
-}
-
 type LIEntry struct {
-	Key  LIKey    `json:"k-t"`
-	Prev []uint64 `json:"b-t"`
+	KT   string   `json:"kt"`
+	Prev []uint64 `json:"bt"`
 }
 
 func LockFile(file *os.File) {
@@ -196,13 +186,10 @@ func (d *DB) Commit(block *common.Block) error {
 
 					dataKey := constructDataKey(ns, kvWrite.Key, blockNo, tranNo)
 
-					LI := LIKey{
-						Key:     kvWrite.Key,
-						TranNum: tranNo,
-					}
+					liKey := kvWrite.Key + "," + strconv.FormatUint(tranNo, 10)
 
 					entry := LIEntry{
-						Key:  LI,
+						KT:   liKey,
 						Prev: []uint64{prevBlock, prevTran},
 					}
 

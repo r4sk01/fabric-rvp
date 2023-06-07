@@ -57,22 +57,26 @@ type historyScanner struct {
 	getNextBlockTran func(key string) (uint64, uint64)
 }
 
-func findGlobalBlockNum(globalBytes []byte, key string) (uint64, uint64) {
+func findGlobalBlockNum(globalBytes *[]byte, key string) (uint64, uint64) {
 	globalIndex := make(map[string][]uint64)
-	json.Unmarshal(globalBytes, &globalIndex)
+	json.Unmarshal(*globalBytes, &globalIndex)
 	return globalIndex[key][0], globalIndex[key][1]
 }
 
-func decodeLocalBlockTran(localBytes []byte, key string, tranNum uint64) (uint64, uint64) {
-	localIndex := make(map[LIKey]LIEntry)
-	json.Unmarshal(localBytes, &localIndex)
-
-	entry, found := localIndex[LIKey{Key: key, TranNum: tranNum}]
-	if !found {
-		log.Println("LIKey not found")
-		return 0, 0
+func decodeLocalBlockTran(localFile *os.File, key string, tranNum uint64) (uint64, uint64) {
+	liKey := key + "," + strconv.FormatUint(tranNum, 10)
+	decoder := json.NewDecoder(localFile)
+	for decoder.More() {
+		var curr LIEntry
+		err := decoder.Decode(&curr)
+		if err != nil {
+			log.Println(err)
+		}
+		if liKey == curr.KT {
+			return curr.Prev[0], curr.Prev[1]
+		}
 	}
-	return entry.Prev[0], entry.Prev[1]
+	return 0, 0
 }
 
 func newSaiIter() func(key string) (uint64, uint64) {
@@ -84,7 +88,7 @@ func newSaiIter() func(key string) (uint64, uint64) {
 		// If first flag hasn't been set to false, use global index to find most recent block
 		if first {
 			first = false
-			globalIndexFile, err := os.OpenFile("/var/GI-Storage/globalIndex.json", os.O_RDONLY, 0444)
+			globalIndexFile, err := os.Open("/var/GI-Storage/globalIndex.json")
 			if err != nil {
 				log.Println(err)
 			}
@@ -95,22 +99,18 @@ func newSaiIter() func(key string) (uint64, uint64) {
 				log.Println(err)
 			}
 			UnlockFile(globalIndexFile)
-			prevBlockNum, tranNum = findGlobalBlockNum(globalBytes, key)
+			prevBlockNum, tranNum = findGlobalBlockNum(&globalBytes, key)
 		}
 		currBlockNum = prevBlockNum
 		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(prevBlockNum, 10) + ".json"
-		localIndexFile, err := os.OpenFile(localFileName, os.O_RDONLY, 0444)
+		localIndexFile, err := os.Open(localFileName)
 		if err != nil {
 			log.Println(err)
 		}
 		defer CloseFile(localIndexFile)
 		LockFile(localIndexFile)
-		localBytes, err := io.ReadAll(localIndexFile)
-		if err != nil {
-			log.Println(err)
-		}
+		prevBlockNum, tranNum = decodeLocalBlockTran(localIndexFile, key, tranNum)
 		UnlockFile(localIndexFile)
-		prevBlockNum, tranNum = decodeLocalBlockTran(localBytes, key, tranNum)
 		return currBlockNum, tranNum
 	}
 }
