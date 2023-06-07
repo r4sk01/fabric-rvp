@@ -49,12 +49,20 @@ func (q *QueryExecutor) GetHistoryForKey(namespace string, key string) (commonle
 
 // historyScanner implements ResultsIterator for iterating through history results
 type historyScanner struct {
-	rangeScan        *rangeScan
-	namespace        string
-	key              string
-	dbItr            iterator.Iterator
-	blockStore       *blkstorage.BlockStore
-	getNextBlockTran func(key string) (uint64, uint64)
+	rangeScan  *rangeScan
+	namespace  string
+	key        string
+	dbItr      iterator.Iterator
+	blockStore *blkstorage.BlockStore
+	saiItr     *saiIterator
+}
+
+type saiIterator struct {
+	first        bool
+	last         bool
+	prevBlockNum uint64
+	currBlockNum uint64
+	tranNum      uint64
 }
 
 func findGlobalBlockNum(globalBytes *[]byte, key string) (uint64, uint64) {
@@ -79,40 +87,46 @@ func decodeLocalBlockTran(localFile *os.File, key string, tranNum uint64) (uint6
 	return 0, 0
 }
 
-func newSaiIter() func(key string) (uint64, uint64) {
-	first := true
-	var prevBlockNum uint64
-	var currBlockNum uint64
-	var tranNum uint64
-	return func(key string) (uint64, uint64) {
-		// If first flag hasn't been set to false, use global index to find most recent block
-		if first {
-			first = false
-			globalIndexFile, err := os.Open("/var/GI-Storage/globalIndex.json")
-			if err != nil {
-				log.Println(err)
-			}
-			defer CloseFile(globalIndexFile)
-			LockFile(globalIndexFile)
-			globalBytes, err := io.ReadAll(globalIndexFile)
-			if err != nil {
-				log.Println(err)
-			}
-			UnlockFile(globalIndexFile)
-			prevBlockNum, tranNum = findGlobalBlockNum(&globalBytes, key)
-		}
-		currBlockNum = prevBlockNum
-		localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(prevBlockNum, 10) + ".json"
-		localIndexFile, err := os.Open(localFileName)
+func newSaiIter() *saiIterator {
+	// return &historyScanner{rangeScan, namespace, key, dbItr, q.blockStore, newSaiIter()}, nil
+	return &saiIterator{true, false, 0, 0, 0}
+}
+
+func (itr *saiIterator) next(key string) (uint64, uint64) {
+	// If itr.first flag hasn't been set to false, use global index to find most recent block
+	if itr.first {
+		itr.first = false
+		globalIndexFile, err := os.Open("/var/GI-Storage/globalIndex.json")
 		if err != nil {
 			log.Println(err)
 		}
-		defer CloseFile(localIndexFile)
-		LockFile(localIndexFile)
-		prevBlockNum, tranNum = decodeLocalBlockTran(localIndexFile, key, tranNum)
-		UnlockFile(localIndexFile)
-		return currBlockNum, tranNum
+		defer CloseFile(globalIndexFile)
+		LockFile(globalIndexFile)
+		globalBytes, err := io.ReadAll(globalIndexFile)
+		if err != nil {
+			log.Println(err)
+		}
+		UnlockFile(globalIndexFile)
+		itr.prevBlockNum, itr.tranNum = findGlobalBlockNum(&globalBytes, key)
 	}
+	itr.currBlockNum = itr.prevBlockNum
+	localFileName := "/var/LI-Storage/localIndex-" + strconv.FormatUint(itr.prevBlockNum, 10) + ".json"
+	localIndexFile, err := os.Open(localFileName)
+	if err != nil {
+		log.Println(err)
+	}
+	defer CloseFile(localIndexFile)
+	LockFile(localIndexFile)
+	prevBlockNum, prevTranNum := decodeLocalBlockTran(localIndexFile, key, itr.tranNum)
+	UnlockFile(localIndexFile)
+	currTranNum := itr.tranNum
+	if itr.currBlockNum == prevBlockNum && itr.tranNum == prevTranNum {
+		itr.last = true
+	} else {
+		itr.prevBlockNum = prevBlockNum
+		itr.tranNum = prevTranNum
+	}
+	return itr.currBlockNum, currTranNum
 }
 
 // Next iterates to the next key, in the order of newest to oldest, from history scanner.
@@ -130,7 +144,11 @@ func (scanner *historyScanner) Next() (commonledger.QueryResult, error) {
 	// 	return nil, err
 	// }
 
-	blockNum, tranNum := scanner.getNextBlockTran(scanner.key)
+	// If last flag is set, we have no more entries and return nil query
+	if scanner.saiItr.last {
+		return nil, nil
+	}
+	blockNum, tranNum := scanner.saiItr.next(scanner.key)
 
 	logger.Debugf("Found history record for namespace:%s key:%s at blockNumTranNum %v:%v\n",
 		scanner.namespace, scanner.key, blockNum, tranNum)
