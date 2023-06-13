@@ -70,6 +70,11 @@ type DB struct {
 	name    string
 }
 
+type LIEntry struct {
+	KT   string   `json:"kt"`
+	Prev []uint64 `json:"bt"`
+}
+
 func LockFile(file *os.File) {
 	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 }
