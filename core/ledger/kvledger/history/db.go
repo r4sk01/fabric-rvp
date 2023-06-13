@@ -70,11 +70,6 @@ type DB struct {
 	name    string
 }
 
-type LIEntry struct {
-	KT   string   `json:"kt"`
-	Prev []uint64 `json:"bt"`
-}
-
 func LockFile(file *os.File) {
 	syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
 }
@@ -125,6 +120,9 @@ func (d *DB) Commit(block *common.Block) error {
 		log.Println(err)
 	}
 	defer CloseFile(localIndexFile)
+
+	// Create a map to hold local index data
+	localIndexMap := make(map[string][]uint64)
 
 	// Get the invalidation byte array for the block
 	txsFilter := txflags.ValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
@@ -188,25 +186,7 @@ func (d *DB) Commit(block *common.Block) error {
 
 					liKey := kvWrite.Key + "," + strconv.FormatUint(tranNo, 10)
 
-					entry := LIEntry{
-						KT:   liKey,
-						Prev: []uint64{prevBlock, prevTran},
-					}
-
-					// Convert the DataKeySAI instance to json
-					jsonBytes, err := json.Marshal(entry)
-					if err != nil {
-						log.Println(err)
-					}
-
-					jsonString := string(jsonBytes) + "\n"
-
-					LockFile(localIndexFile)
-					_, err = localIndexFile.WriteString(jsonString)
-					if err != nil {
-						log.Println(err)
-					}
-					UnlockFile(localIndexFile)
+					localIndexMap[liKey] = []uint64{prevBlock, prevTran}
 
 					// No value is required, write an empty byte array (emptyValue) since Put() of nil is not allowed
 					dbBatch.Put(dataKey, emptyValue)
@@ -245,6 +225,18 @@ func (d *DB) Commit(block *common.Block) error {
 		log.Println(err)
 	}
 	UnlockFile(globalIndexFile)
+
+	LockFile(localIndexFile)
+	jsonBytes, err := json.Marshal(localIndexMap)
+	if err != nil {
+		log.Println(err)
+	}
+
+	_, err = localIndexFile.Write(jsonBytes)
+	if err != nil {
+		log.Println(err)
+	}
+	UnlockFile(localIndexFile)
 
 	// add savepoint for recovery purpose
 	height := version.NewHeight(blockNo, tranNo)
