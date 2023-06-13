@@ -73,17 +73,17 @@ func findGlobalBlockNum(globalBytes *[]byte, key string) (uint64, uint64) {
 
 func decodeLocalBlockTran(localFile *os.File, key string, tranNum uint64) (uint64, uint64) {
 	liKey := key + "," + strconv.FormatUint(tranNum, 10)
-	decoder := json.NewDecoder(localFile)
-	for decoder.More() {
-		var curr LIEntry
-		err := decoder.Decode(&curr)
-		if err != nil {
-			log.Println(err)
-		}
-		if liKey == curr.KT {
-			return curr.Prev[0], curr.Prev[1]
-		}
+	var localIndex map[string][]uint64
+	err := json.NewDecoder(localFile).Decode(&localIndex)
+	if err != nil {
+		log.Println(err)
+		return 0, 0
 	}
+
+	if prev, ok := localIndex[liKey]; ok {
+		return prev[0], prev[1]
+	}
+
 	return 0, 0
 }
 
