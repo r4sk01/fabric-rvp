@@ -231,6 +231,8 @@ type ChaincodeStubInterface interface {
 	// update ledger, and should limit use to read-only chaincode operations.
 	GetHistoryForKey(key string) (HistoryQueryIteratorInterface, error)
 
+	GetHistoryForKeys(keys []string) ([]HistoryQueryIteratorInterface, error)
+
 	// GetPrivateData returns the value of the specified `key` from the specified
 	// `collection`. Note that GetPrivateData doesn't read data from the
 	// private writeset, which has not been committed to the `collection`. In

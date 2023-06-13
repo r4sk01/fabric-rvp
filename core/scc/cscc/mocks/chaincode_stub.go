@@ -138,6 +138,21 @@ type ChaincodeStub struct {
 		result1 shim.HistoryQueryIteratorInterface
 		result2 error
 	}
+	// New
+	GetHistoryForKeysStub        func([]string) ([]shim.HistoryQueryIteratorInterface, error)
+	getHistoryForKeysMutex       sync.RWMutex
+	getHistoryForKeysArgsForCall []struct {
+		arg1 []string
+	}
+	getHistoryForKeysReturns struct {
+		result1 []shim.HistoryQueryIteratorInterface
+		result2 error
+	}
+	getHistoryForKeysReturnsOnCall map[int]struct {
+		result1 []shim.HistoryQueryIteratorInterface
+		result2 error
+	}
+	// End
 	GetPrivateDataStub        func(string, string) ([]byte, error)
 	getPrivateDataMutex       sync.RWMutex
 	getPrivateDataArgsForCall []struct {
@@ -1122,6 +1137,72 @@ func (fake *ChaincodeStub) GetHistoryForKeyReturnsOnCall(i int, result1 shim.His
 		result2 error
 	}{result1, result2}
 }
+
+// NEW
+func (fake *ChaincodeStub) GetHistoryForKeys(arg1 []string) ([]shim.HistoryQueryIteratorInterface, error) {
+	fake.getHistoryForKeysMutex.Lock()
+	ret, specificReturn := fake.getHistoryForKeysReturnsOnCall[len(fake.getHistoryForKeysArgsForCall)]
+	fake.getHistoryForKeysArgsForCall = append(fake.getHistoryForKeysArgsForCall, struct {
+		arg1 []string
+	}{arg1})
+	fake.recordInvocation("GetHistoryForKeys", []interface{}{arg1})
+	fake.getHistoryForKeysMutex.Unlock()
+	if fake.GetHistoryForKeysStub != nil {
+		return fake.GetHistoryForKeysStub(arg1)
+	}
+	if specificReturn {
+		return ret.result1, ret.result2
+	}
+	fakeReturns := fake.getHistoryForKeysReturns
+	return fakeReturns.result1, fakeReturns.result2
+}
+
+func (fake *ChaincodeStub) GetHistoryForKeysCallCount() int {
+	fake.getHistoryForKeysMutex.RLock()
+	defer fake.getHistoryForKeysMutex.RUnlock()
+	return len(fake.getHistoryForKeysArgsForCall)
+}
+
+func (fake *ChaincodeStub) GetHistoryForKeysCalls(stub func([]string) ([]shim.HistoryQueryIteratorInterface, error)) {
+	fake.getHistoryForKeysMutex.Lock()
+	defer fake.getHistoryForKeysMutex.Unlock()
+	fake.GetHistoryForKeysStub = stub
+}
+
+func (fake *ChaincodeStub) GetHistoryForKeysArgsForCall(i int) []string {
+	fake.getHistoryForKeysMutex.RLock()
+	defer fake.getHistoryForKeysMutex.RUnlock()
+	argsForCall := fake.getHistoryForKeysArgsForCall[i]
+	return argsForCall.arg1
+}
+
+func (fake *ChaincodeStub) GetHistoryForKeysReturns(result1 []shim.HistoryQueryIteratorInterface, result2 error) {
+	fake.getHistoryForKeysMutex.Lock()
+	defer fake.getHistoryForKeysMutex.Unlock()
+	fake.GetHistoryForKeysStub = nil
+	fake.getHistoryForKeysReturns = struct {
+		result1 []shim.HistoryQueryIteratorInterface
+		result2 error
+	}{result1, result2}
+}
+
+func (fake *ChaincodeStub) GetHistoryForKeysReturnsOnCall(i int, result1 []shim.HistoryQueryIteratorInterface, result2 error) {
+	fake.getHistoryForKeysMutex.Lock()
+	defer fake.getHistoryForKeysMutex.Unlock()
+	fake.GetHistoryForKeysStub = nil
+	if fake.getHistoryForKeysReturnsOnCall == nil {
+		fake.getHistoryForKeysReturnsOnCall = make(map[int]struct {
+			result1 []shim.HistoryQueryIteratorInterface
+			result2 error
+		})
+	}
+	fake.getHistoryForKeysReturnsOnCall[i] = struct {
+		result1 []shim.HistoryQueryIteratorInterface
+		result2 error
+	}{result1, result2}
+}
+//END
+
 
 func (fake *ChaincodeStub) GetPrivateData(arg1 string, arg2 string) ([]byte, error) {
 	fake.getPrivateDataMutex.Lock()
@@ -2806,6 +2887,10 @@ func (fake *ChaincodeStub) Invocations() map[string][][]interface{} {
 	defer fake.getFunctionAndParametersMutex.RUnlock()
 	fake.getHistoryForKeyMutex.RLock()
 	defer fake.getHistoryForKeyMutex.RUnlock()
+	// New
+	fake.getHistoryForKeyMutex.RLock()
+	defer fake.getHistoryForKeyMutex.RUnlock()
+	// End
 	fake.getPrivateDataMutex.RLock()
 	defer fake.getPrivateDataMutex.RUnlock()
 	fake.getPrivateDataByPartialCompositeKeyMutex.RLock()
