@@ -8,11 +8,6 @@ package history
 
 import (
 	"encoding/json"
-	"io"
-	"log"
-	"os"
-	"strconv"
-
 	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric-protos-go/ledger/queryresult"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
@@ -22,6 +17,10 @@ import (
 	protoutil "github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
+	"io"
+	"log"
+	"os"
+	"strconv"
 )
 
 // QueryExecutor is a query executor against the LevelDB history DB
